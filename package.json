@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "Backend para a plataforma Supravel Connect que conecta técnicos de manutenção com clientes",
   "main": "dist/server.js",
+  "engines": {
+   "node": "22.x",
+    "npm": "10.x"
+  },
   "scripts": {
     "start": "node dist/server.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
