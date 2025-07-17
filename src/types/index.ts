@@ -1,6 +1,6 @@
 // src/types/index.ts - Versão final corrigida
 
-import { Request } from 'express';
+import { Request, Response, NextFunction } from 'express';
 
 // Enum para status de sessão
 export enum SessionStatus {
@@ -84,7 +84,7 @@ export interface SessionExtensions {
   addRating?(rating: number, comment?: string): Promise<void>;
 }
 
-// Tipos para middleware de autenticação
+// Tipos para middleware de autenticação - CORRIGIDO
 export interface AuthMiddleware {
   (req: Request, res: Response, next: NextFunction): void;
 }
