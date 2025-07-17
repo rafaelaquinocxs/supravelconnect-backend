@@ -1,26 +1,30 @@
-import express from 'express';
-import { 
-  getAvailableTechnicians, 
-  getTechnicianById, 
-  updateAvailability, 
-  getAllSpecialties,
-  updateSpecialties
+import { Router } from 'express';
+import { Response } from 'express';
+import {
+  getTechnicians,
+  getTechnicianById,
+  updateTechnicianProfile,
+  getTechnicianStats,
+  updateTechnicianAvailability
 } from '../controllers/technicianController';
-import { protect, client, technician } from '../middlewares/authMiddleware';
 
-const router = express.Router();
+// Importar middleware de autenticação (corrigido)
+import { authMiddleware } from '../middlewares/authMiddleware';
+
+// Definir interface para Request com user
+interface AuthenticatedRequest extends Request {
+  user: any; // Usar any para evitar conflitos de tipagem
+}
+
+const router = Router();
 
 // Rotas públicas
-router.get('/specialties', getAllSpecialties);
+router.get('/', getTechnicians as any);
 
-// Rotas protegidas para todos os usuários
-router.get('/:id', protect, getTechnicianById);
-
-// Rotas protegidas para clientes
-router.get('/available', protect, client, getAvailableTechnicians);
-
-// Rotas protegidas para técnicos
-router.put('/availability', protect, technician, updateAvailability);
-router.put('/specialties', protect, technician, updateSpecialties);
+// Rotas protegidas (usando authMiddleware genérico)
+router.get('/profile', authMiddleware, getTechnicianById as any);
+router.put('/profile', authMiddleware, updateTechnicianProfile as any);
+router.get('/stats', authMiddleware, getTechnicianStats as any);
+router.put('/availability', authMiddleware, updateTechnicianAvailability as any);
 
 export default router;

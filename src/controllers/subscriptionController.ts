@@ -1,8 +1,25 @@
 import { Request, Response } from 'express';
 import User from '../models/userModel';
 
+// Interface para Request autenticado
+interface AuthRequest extends Request {
+  user?: any;
+}
+
+// Interface para planos de assinatura
+interface SubscriptionPlan {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  credits?: number;
+  commission?: number;
+  features: string[];
+  isPopular?: boolean;
+}
+
 // Planos disponíveis (em produção, isso viria do banco de dados)
-const SUBSCRIPTION_PLANS = {
+const SUBSCRIPTION_PLANS: { [key: string]: SubscriptionPlan[] } = {
   client: [
     {
       id: 'client_basic',
@@ -102,10 +119,10 @@ const SUBSCRIPTION_PLANS = {
 // @desc    Obter planos disponíveis
 // @route   GET /api/subscriptions/plans
 // @access  Public
-export const getSubscriptionPlans = async (req: Request, res: Response) => {
+export const getSubscriptionPlans = async (req: AuthRequest, res: Response) => {
   try {
     const userRole = req.user?.role || 'client';
-    const plans = SUBSCRIPTION_PLANS[userRole as keyof typeof SUBSCRIPTION_PLANS] || SUBSCRIPTION_PLANS.client;
+    const plans = SUBSCRIPTION_PLANS[userRole] || SUBSCRIPTION_PLANS.client;
 
     res.status(200).json({
       success: true,
@@ -122,7 +139,7 @@ export const getSubscriptionPlans = async (req: Request, res: Response) => {
 // @desc    Obter assinatura atual do usuário
 // @route   GET /api/subscriptions/current
 // @access  Private
-export const getCurrentSubscription = async (req: Request, res: Response) => {
+export const getCurrentSubscription = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?._id;
 
@@ -136,7 +153,7 @@ export const getCurrentSubscription = async (req: Request, res: Response) => {
     }
 
     // Se não tem assinatura, retorna null
-    if (!user.subscriptionPlan) {
+    if (!(user as any).subscriptionPlan) {
       return res.status(200).json({
         success: true,
         data: null
@@ -145,8 +162,8 @@ export const getCurrentSubscription = async (req: Request, res: Response) => {
 
     // Buscar detalhes do plano
     const userRole = req.user?.role || 'client';
-    const plans = SUBSCRIPTION_PLANS[userRole as keyof typeof SUBSCRIPTION_PLANS] || SUBSCRIPTION_PLANS.client;
-    const plan = plans.find(p => p.id === user.subscriptionPlan);
+    const plans = SUBSCRIPTION_PLANS[userRole] || SUBSCRIPTION_PLANS.client;
+    const plan = plans.find(p => p.id === (user as any).subscriptionPlan);
 
     if (!plan) {
       return res.status(404).json({
@@ -157,14 +174,14 @@ export const getCurrentSubscription = async (req: Request, res: Response) => {
 
     const subscription = {
       id: user._id,
-      planId: user.subscriptionPlan,
-      status: user.subscriptionStatus || 'active',
-      startDate: user.subscriptionStartDate,
-      endDate: user.subscriptionEndDate,
+      planId: (user as any).subscriptionPlan,
+      status: (user as any).subscriptionStatus || 'active',
+      startDate: (user as any).subscriptionStartDate,
+      endDate: (user as any).subscriptionEndDate,
       plan: plan,
-      autoRenew: user.autoRenew || false,
-      nextBillingDate: user.subscriptionEndDate,
-      paymentMethod: user.paymentMethod || 'Cartão de Crédito'
+      autoRenew: (user as any).autoRenew || false,
+      nextBillingDate: (user as any).subscriptionEndDate,
+      paymentMethod: (user as any).paymentMethod || 'Cartão de Crédito'
     };
 
     res.status(200).json({
@@ -182,7 +199,7 @@ export const getCurrentSubscription = async (req: Request, res: Response) => {
 // @desc    Assinar um plano
 // @route   POST /api/subscriptions/subscribe
 // @access  Private
-export const subscribeToplan = async (req: Request, res: Response) => {
+export const subscribeToplan = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?._id;
     const { planId } = req.body;
@@ -205,10 +222,10 @@ export const subscribeToplan = async (req: Request, res: Response) => {
 
     // Verificar se o plano existe
     const userRole = user.role || 'client';
-    const plans = SUBSCRIPTION_PLANS[userRole as keyof typeof SUBSCRIPTION_PLANS] || SUBSCRIPTION_PLANS.client;
-    const plan = plans.find(p => p.id === planId);
+    const plans = SUBSCRIPTION_PLANS[userRole] || SUBSCRIPTION_PLANS.client;
+    const selectedPlan = plans.find(p => p.id === planId);
 
-    if (!plan) {
+    if (!selectedPlan) {
       return res.status(404).json({
         success: false,
         message: 'Plano não encontrado'
@@ -224,15 +241,17 @@ export const subscribeToplan = async (req: Request, res: Response) => {
     const endDate = new Date();
     endDate.setMonth(endDate.getMonth() + 1);
 
-    user.subscriptionPlan = planId;
-    user.subscriptionStatus = 'active';
-    user.subscriptionStartDate = startDate;
-    user.subscriptionEndDate = endDate;
-    user.autoRenew = true;
+    (user as any).subscriptionPlan = planId;
+    (user as any).subscriptionStatus = 'active';
+    (user as any).subscriptionStartDate = startDate;
+    (user as any).subscriptionEndDate = endDate;
+    (user as any).autoRenew = true;
 
-    // Se for cliente, adicionar créditos
-    if (userRole === 'client' && plan.credits) {
-      user.credits = (user.credits || 0) + plan.credits;
+    // CORREÇÃO: Se for cliente, adicionar créditos com verificação segura
+    if (userRole === 'client' && selectedPlan.credits) {
+      const creditsToAdd = selectedPlan.credits || 0;
+      (user as any).credits = ((user as any).credits || 0) + creditsToAdd;
+      console.log(`Adicionando ${creditsToAdd} créditos para usuário ${user._id}`);
     }
 
     await user.save();
@@ -261,7 +280,7 @@ export const subscribeToplan = async (req: Request, res: Response) => {
 // @desc    Cancelar assinatura
 // @route   POST /api/subscriptions/cancel
 // @access  Private
-export const cancelSubscription = async (req: Request, res: Response) => {
+export const cancelSubscription = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?._id;
     const { reason } = req.body;
@@ -275,7 +294,7 @@ export const cancelSubscription = async (req: Request, res: Response) => {
       });
     }
 
-    if (!user.subscriptionPlan) {
+    if (!(user as any).subscriptionPlan) {
       return res.status(400).json({
         success: false,
         message: 'Usuário não possui assinatura ativa'
@@ -283,10 +302,10 @@ export const cancelSubscription = async (req: Request, res: Response) => {
     }
 
     // Cancelar assinatura (mantém até o final do período)
-    user.subscriptionStatus = 'cancelled';
-    user.autoRenew = false;
-    user.cancellationReason = reason;
-    user.cancellationDate = new Date();
+    (user as any).subscriptionStatus = 'cancelled';
+    (user as any).autoRenew = false;
+    (user as any).cancellationReason = reason;
+    (user as any).cancellationDate = new Date();
 
     await user.save();
 
@@ -305,7 +324,7 @@ export const cancelSubscription = async (req: Request, res: Response) => {
 // @desc    Reativar assinatura
 // @route   POST /api/subscriptions/reactivate
 // @access  Private
-export const reactivateSubscription = async (req: Request, res: Response) => {
+export const reactivateSubscription = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?._id;
 
@@ -318,7 +337,7 @@ export const reactivateSubscription = async (req: Request, res: Response) => {
       });
     }
 
-    if (user.subscriptionStatus !== 'cancelled') {
+    if ((user as any).subscriptionStatus !== 'cancelled') {
       return res.status(400).json({
         success: false,
         message: 'Assinatura não está cancelada'
@@ -326,10 +345,10 @@ export const reactivateSubscription = async (req: Request, res: Response) => {
     }
 
     // Reativar assinatura
-    user.subscriptionStatus = 'active';
-    user.autoRenew = true;
-    user.cancellationReason = undefined;
-    user.cancellationDate = undefined;
+    (user as any).subscriptionStatus = 'active';
+    (user as any).autoRenew = true;
+    (user as any).cancellationReason = undefined;
+    (user as any).cancellationDate = undefined;
 
     await user.save();
 
@@ -348,7 +367,7 @@ export const reactivateSubscription = async (req: Request, res: Response) => {
 // @desc    Alterar renovação automática
 // @route   POST /api/subscriptions/auto-renew
 // @access  Private
-export const toggleAutoRenew = async (req: Request, res: Response) => {
+export const toggleAutoRenew = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?._id;
     const { autoRenew } = req.body;
@@ -362,20 +381,20 @@ export const toggleAutoRenew = async (req: Request, res: Response) => {
       });
     }
 
-    if (!user.subscriptionPlan) {
+    if (!(user as any).subscriptionPlan) {
       return res.status(400).json({
         success: false,
         message: 'Usuário não possui assinatura ativa'
       });
     }
 
-    user.autoRenew = autoRenew;
+    (user as any).autoRenew = autoRenew;
     await user.save();
 
     res.status(200).json({
       success: true,
       data: {
-        autoRenew: user.autoRenew
+        autoRenew: (user as any).autoRenew
       },
       message: `Renovação automática ${autoRenew ? 'ativada' : 'desativada'}`
     });
@@ -390,7 +409,7 @@ export const toggleAutoRenew = async (req: Request, res: Response) => {
 // @desc    Obter histórico de pagamentos
 // @route   GET /api/subscriptions/payment-history
 // @access  Private
-export const getPaymentHistory = async (req: Request, res: Response) => {
+export const getPaymentHistory = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?._id;
 
