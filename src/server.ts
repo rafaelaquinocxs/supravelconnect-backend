@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import connectDB from './config/database';
+import mongoose from 'mongoose';
 
 // Importar rotas existentes
 import authRoutes from './routes/authRoutes';
@@ -24,7 +24,7 @@ const server = createServer(app);
 const io = new Server(server, {
   cors: {
     origin: process.env.NODE_ENV === 'production' 
-      ? ['https://seu-dominio.com'] 
+      ? [process.env.FRONTEND_URL || 'https://seu-frontend.vercel.app'] 
       : ['http://localhost:3000', 'http://localhost:5173'],
     methods: ['GET', 'POST'],
     credentials: true
@@ -35,7 +35,7 @@ const io = new Server(server, {
 // Middlewares
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
-    ? ['https://seu-dominio.com'] 
+    ? [process.env.FRONTEND_URL || 'https://seu-frontend.vercel.app'] 
     : ['http://localhost:3000', 'http://localhost:5173'],
   credentials: true
 }));
@@ -44,6 +44,19 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Conectar ao MongoDB
+const connectDB = async (): Promise<void> => {
+  try {
+    const mongoURI = process.env.MONGODB_URI || process.env.DATABASE_URL || 'mongodb://localhost:27017/supravel';
+    
+    await mongoose.connect(mongoURI);
+    
+    console.log(`MongoDB conectado: ${mongoose.connection.host}`);
+  } catch (error) {
+    console.error('Erro ao conectar ao MongoDB:', error);
+    process.exit(1);
+  }
+};
+
 connectDB();
 
 // Rotas existentes
@@ -59,7 +72,17 @@ app.get('/api/status', (req, res) => {
     status: 'OK', 
     message: 'Supravel Connect API funcionando',
     videocall: 'Ativo',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// Rota raiz
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Supravel Connect API',
+    version: '1.0.0',
+    status: 'Online'
   });
 });
 

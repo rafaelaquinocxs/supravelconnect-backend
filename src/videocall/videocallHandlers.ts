@@ -7,263 +7,279 @@ interface User {
   userRole: string;
 }
 
-interface SessionRoom {
-  sessionId: string;
-  participants: Map<string, User>;
-  callActive: boolean;
-  callInitiator?: string;
+interface Room {
+  id: string;
+  participants: User[];
+  createdAt: Date;
 }
 
-const sessions = new Map<string, SessionRoom>();
+interface WebRTCSignal {
+  type: 'offer' | 'answer' | 'ice-candidate';
+  data: any;
+  from: string;
+  to: string;
+}
+
+interface ChatMessage {
+  sessionId: string;
+  message: string;
+  userName: string;
+  timestamp: string;
+  socketId: string;
+}
+
+// Armazenar salas ativas em memória
+const activeRooms = new Map<string, Room>();
 const userSockets = new Map<string, string>(); // userId -> socketId
 
-export const setupVideoCallHandlers = (io: Server) => {
+export const setupVideoCallHandlers = (io: Server): void => {
+  console.log('🎥 Configurando handlers de videochamadas...');
+
   io.on('connection', (socket: Socket) => {
-    console.log(`🔗 Cliente conectado: ${socket.id}`);
+    console.log(`👤 Usuário conectado: ${socket.id}`);
 
-    // Registrar usuário
-    socket.on('register-user', (data: { userId: string; name: string; role: string }) => {
-      userSockets.set(data.userId, socket.id);
-      console.log(`👤 Usuário registrado: ${data.name} (${data.role})`);
-    });
+    // Entrar em uma sala de videochamada
+    socket.on('join-videocall', (data: { sessionId: string; userId: string; userName: string; userRole: string }) => {
+      try {
+        const { sessionId, userId, userName, userRole } = data;
+        
+        console.log(`🎥 ${userName} (${userRole}) entrando na sala: ${sessionId}`);
 
-    // Entrar em uma sessão
-    socket.on('join-session', (data: { sessionId: string; userId: string; userName: string; userRole: string }) => {
-      const { sessionId, userId, userName, userRole } = data;
-      
-      // Criar ou obter sessão
-      if (!sessions.has(sessionId)) {
-        sessions.set(sessionId, {
+        // Sair de salas anteriores
+        socket.rooms.forEach(room => {
+          if (room !== socket.id) {
+            socket.leave(room);
+          }
+        });
+
+        // Entrar na nova sala
+        socket.join(sessionId);
+
+        // Criar ou atualizar sala
+        if (!activeRooms.has(sessionId)) {
+          activeRooms.set(sessionId, {
+            id: sessionId,
+            participants: [],
+            createdAt: new Date()
+          });
+        }
+
+        const room = activeRooms.get(sessionId)!;
+        
+        // Remover participante existente (reconexão)
+        room.participants = room.participants.filter(p => p.userId !== userId);
+        
+        // Adicionar novo participante
+        const user: User = { socketId: socket.id, userId, userName, userRole };
+        room.participants.push(user);
+        userSockets.set(userId, socket.id);
+
+        // Notificar todos na sala sobre participantes atualizados
+        io.to(sessionId).emit('participants-updated', {
+          participants: room.participants,
+          total: room.participants.length
+        });
+
+        // Confirmar entrada
+        socket.emit('joined-videocall', {
           sessionId,
-          participants: new Map(),
-          callActive: false
+          participants: room.participants,
+          success: true
         });
+
+        console.log(`✅ ${userName} entrou na sala ${sessionId}. Total: ${room.participants.length}`);
+
+      } catch (error) {
+        console.error('❌ Erro ao entrar na videochamada:', error);
+        socket.emit('videocall-error', { message: 'Erro ao entrar na videochamada' });
       }
-      
-      const session = sessions.get(sessionId)!;
-      
-      // Adicionar participante
-      const user: User = {
-        socketId: socket.id,
-        userId,
-        userName,
-        userRole
-      };
-      
-      session.participants.set(socket.id, user);
-      socket.join(sessionId);
-      
-      console.log(`👥 ${userName} entrou na sessão ${sessionId}`);
-      
-      // Notificar outros participantes
-      socket.to(sessionId).emit('user-joined', user);
-      
-      // Enviar lista de participantes
-      const participantsList = Array.from(session.participants.values());
-      io.to(sessionId).emit('session-participants', participantsList);
-      
-      // Se há 2 participantes, sessão está pronta
-      if (session.participants.size >= 2) {
-        io.to(sessionId).emit('session-ready', {
-          message: 'Sessão pronta para iniciar videochamada',
-          participants: participantsList.length
-        });
-      }
-    });
-
-    // Iniciar videochamada
-    socket.on('start-video-call', (sessionId: string) => {
-      const session = sessions.get(sessionId);
-      if (!session) return;
-      
-      const user = session.participants.get(socket.id);
-      if (!user) return;
-      
-      session.callActive = true;
-      session.callInitiator = socket.id;
-      
-      console.log(`📞 ${user.userName} iniciou videochamada na sessão ${sessionId}`);
-      
-      // Notificar outros participantes
-      socket.to(sessionId).emit('incoming-call', {
-        from: user,
-        sessionId
-      });
-    });
-
-    // Aceitar chamada
-    socket.on('accept-call', (sessionId: string) => {
-      const session = sessions.get(sessionId);
-      if (!session) return;
-      
-      const user = session.participants.get(socket.id);
-      if (!user) return;
-      
-      console.log(`✅ ${user.userName} aceitou a videochamada`);
-      
-      // Notificar que a chamada foi aceita
-      io.to(sessionId).emit('call-accepted', {
-        acceptedBy: user
-      });
-    });
-
-    // Rejeitar chamada
-    socket.on('reject-call', (sessionId: string) => {
-      const session = sessions.get(sessionId);
-      if (!session) return;
-      
-      const user = session.participants.get(socket.id);
-      if (!user) return;
-      
-      session.callActive = false;
-      session.callInitiator = undefined;
-      
-      console.log(`❌ ${user.userName} rejeitou a videochamada`);
-      
-      // Notificar que a chamada foi rejeitada
-      io.to(sessionId).emit('call-rejected', {
-        rejectedBy: user
-      });
-    });
-
-    // Finalizar chamada
-    socket.on('end-call', (sessionId: string) => {
-      const session = sessions.get(sessionId);
-      if (!session) return;
-      
-      const user = session.participants.get(socket.id);
-      if (!user) return;
-      
-      session.callActive = false;
-      session.callInitiator = undefined;
-      
-      console.log(`📴 ${user.userName} finalizou a videochamada`);
-      
-      // Notificar que a chamada foi finalizada
-      io.to(sessionId).emit('call-ended', {
-        endedBy: user
-      });
     });
 
     // Sinalização WebRTC
-    socket.on('webrtc-offer', (data: { offer: any; sessionId: string }) => {
-      console.log(`📨 Oferta WebRTC recebida para sessão ${data.sessionId}`);
-      socket.to(data.sessionId).emit('webrtc-offer', {
-        offer: data.offer,
-        from: socket.id
-      });
+    socket.on('webrtc-signal', (data: WebRTCSignal) => {
+      try {
+        const { type, data: signalData, from, to } = data;
+        
+        console.log(`📡 Sinal WebRTC ${type} de ${from} para ${to}`);
+
+        // Encontrar socket do destinatário
+        const targetSocketId = userSockets.get(to);
+        
+        if (targetSocketId) {
+          io.to(targetSocketId).emit('webrtc-signal', {
+            type,
+            data: signalData,
+            from,
+            to
+          });
+          console.log(`✅ Sinal ${type} enviado para ${to}`);
+        } else {
+          console.log(`❌ Usuário ${to} não encontrado`);
+          socket.emit('videocall-error', { message: `Usuário ${to} não encontrado` });
+        }
+
+      } catch (error) {
+        console.error('❌ Erro na sinalização WebRTC:', error);
+        socket.emit('videocall-error', { message: 'Erro na sinalização WebRTC' });
+      }
     });
 
-    socket.on('webrtc-answer', (data: { answer: any; sessionId: string }) => {
-      console.log(`📨 Resposta WebRTC recebida para sessão ${data.sessionId}`);
-      socket.to(data.sessionId).emit('webrtc-answer', {
-        answer: data.answer,
-        from: socket.id
-      });
-    });
+    // Chat durante videochamada
+    socket.on('videocall-message', (data: ChatMessage) => {
+      try {
+        const { sessionId, message, userName, timestamp } = data;
+        
+        console.log(`💬 Mensagem de ${userName} na sala ${sessionId}: ${message}`);
 
-    socket.on('webrtc-ice-candidate', (data: { candidate: any; sessionId: string }) => {
-      console.log(`🧊 ICE candidate recebido para sessão ${data.sessionId}`);
-      socket.to(data.sessionId).emit('webrtc-ice-candidate', {
-        candidate: data.candidate,
-        from: socket.id
-      });
+        // Enviar mensagem para todos na sala
+        io.to(sessionId).emit('videocall-message', {
+          sessionId,
+          message,
+          userName,
+          timestamp,
+          socketId: socket.id
+        });
+
+      } catch (error) {
+        console.error('❌ Erro ao enviar mensagem:', error);
+        socket.emit('videocall-error', { message: 'Erro ao enviar mensagem' });
+      }
     });
 
     // Controles de mídia
-    socket.on('toggle-audio', (data: { sessionId: string; audioEnabled: boolean }) => {
-      socket.to(data.sessionId).emit('peer-audio-toggle', {
-        audioEnabled: data.audioEnabled,
-        from: socket.id
-      });
+    socket.on('media-control', (data: { sessionId: string; type: 'audio' | 'video'; enabled: boolean; userId: string }) => {
+      try {
+        const { sessionId, type, enabled, userId } = data;
+        
+        console.log(`🎛️ ${userId} ${enabled ? 'ativou' : 'desativou'} ${type} na sala ${sessionId}`);
+
+        // Notificar outros participantes
+        socket.to(sessionId).emit('participant-media-changed', {
+          userId,
+          type,
+          enabled
+        });
+
+      } catch (error) {
+        console.error('❌ Erro no controle de mídia:', error);
+      }
     });
 
-    socket.on('toggle-video', (data: { sessionId: string; videoEnabled: boolean }) => {
-      socket.to(data.sessionId).emit('peer-video-toggle', {
-        videoEnabled: data.videoEnabled,
-        from: socket.id
-      });
-    });
+    // Sair da videochamada
+    socket.on('leave-videocall', (data: { sessionId: string; userId: string }) => {
+      try {
+        const { sessionId, userId } = data;
+        
+        console.log(`👋 ${userId} saindo da sala ${sessionId}`);
 
-    // Compartilhamento de tela
-    socket.on('start-screen-share', (sessionId: string) => {
-      socket.to(sessionId).emit('peer-screen-share-started', {
-        from: socket.id
-      });
-    });
+        handleUserLeave(socket, sessionId, userId);
 
-    socket.on('stop-screen-share', (sessionId: string) => {
-      socket.to(sessionId).emit('peer-screen-share-stopped', {
-        from: socket.id
-      });
-    });
-
-    // Chat
-    socket.on('send-message', (data: { sessionId: string; message: string; userName: string }) => {
-      const messageData = {
-        ...data,
-        timestamp: new Date().toISOString(),
-        socketId: socket.id
-      };
-      
-      console.log(`💬 Mensagem de ${data.userName}: ${data.message}`);
-      
-      // Enviar para todos na sessão (incluindo o remetente)
-      io.to(data.sessionId).emit('new-message', messageData);
+      } catch (error) {
+        console.error('❌ Erro ao sair da videochamada:', error);
+      }
     });
 
     // Desconexão
     socket.on('disconnect', () => {
-      console.log(`🔌 Cliente desconectado: ${socket.id}`);
-      
-      // Remover usuário de todas as sessões
-      for (const [sessionId, session] of sessions.entries()) {
-        if (session.participants.has(socket.id)) {
-          const user = session.participants.get(socket.id);
-          session.participants.delete(socket.id);
-          
-          console.log(`👋 ${user?.userName} saiu da sessão ${sessionId}`);
-          
-          // Notificar outros participantes
-          socket.to(sessionId).emit('user-left', {
-            userId: socket.id,
-            userName: user?.userName
-          });
-          
-          // Se a sessão ficou vazia, remover
-          if (session.participants.size === 0) {
-            sessions.delete(sessionId);
-            console.log(`🗑️ Sessão ${sessionId} removida (vazia)`);
-          } else {
-            // Atualizar lista de participantes
-            const participantsList = Array.from(session.participants.values());
-            io.to(sessionId).emit('session-participants', participantsList);
-          }
-          
-          // Se era uma chamada ativa, finalizar
-          if (session.callActive) {
-            session.callActive = false;
-            session.callInitiator = undefined;
-            io.to(sessionId).emit('call-ended', {
-              endedBy: user,
-              reason: 'disconnect'
-            });
+      try {
+        console.log(`👤 Usuário desconectado: ${socket.id}`);
+
+        // Encontrar e remover usuário de todas as salas
+        let userIdToRemove: string | null = null;
+        
+        for (const [userId, socketId] of userSockets.entries()) {
+          if (socketId === socket.id) {
+            userIdToRemove = userId;
+            break;
           }
         }
-      }
-      
-      // Remover do mapa de usuários
-      for (const [userId, socketId] of userSockets.entries()) {
-        if (socketId === socket.id) {
-          userSockets.delete(userId);
-          break;
+
+        if (userIdToRemove) {
+          userSockets.delete(userIdToRemove);
+
+          // Remover de todas as salas ativas
+          for (const [sessionId, room] of activeRooms.entries()) {
+            const participantIndex = room.participants.findIndex(p => p.socketId === socket.id);
+            
+            if (participantIndex !== -1) {
+              room.participants.splice(participantIndex, 1);
+              
+              // Notificar outros participantes
+              socket.to(sessionId).emit('participants-updated', {
+                participants: room.participants,
+                total: room.participants.length
+              });
+
+              socket.to(sessionId).emit('user-left', {
+                userId: userIdToRemove,
+                participants: room.participants
+              });
+
+              console.log(`🚪 ${userIdToRemove} removido da sala ${sessionId}`);
+
+              // Limpar sala vazia
+              if (room.participants.length === 0) {
+                activeRooms.delete(sessionId);
+                console.log(`🗑️ Sala ${sessionId} removida (vazia)`);
+              }
+            }
+          }
         }
+
+      } catch (error) {
+        console.error('❌ Erro na desconexão:', error);
       }
     });
   });
 
-  // Log de status a cada 30 segundos
+  // Função auxiliar para lidar com saída de usuário
+  const handleUserLeave = (socket: Socket, sessionId: string, userId: string): void => {
+    const room = activeRooms.get(sessionId);
+    
+    if (room) {
+      // Remover participante
+      room.participants = room.participants.filter(p => p.userId !== userId);
+      userSockets.delete(userId);
+
+      // Sair da sala
+      socket.leave(sessionId);
+
+      // Notificar outros participantes
+      socket.to(sessionId).emit('participants-updated', {
+        participants: room.participants,
+        total: room.participants.length
+      });
+
+      socket.to(sessionId).emit('user-left', {
+        userId,
+        participants: room.participants
+      });
+
+      // Confirmar saída
+      socket.emit('left-videocall', { sessionId, success: true });
+
+      console.log(`✅ ${userId} saiu da sala ${sessionId}. Restam: ${room.participants.length}`);
+
+      // Limpar sala vazia
+      if (room.participants.length === 0) {
+        activeRooms.delete(sessionId);
+        console.log(`🗑️ Sala ${sessionId} removida (vazia)`);
+      }
+    }
+  };
+
+  // Limpeza periódica de salas antigas (opcional)
   setInterval(() => {
-    console.log(`📊 Status: ${sessions.size} sessões ativas, ${userSockets.size} usuários conectados`);
-  }, 30000);
+    const now = new Date();
+    const maxAge = 2 * 60 * 60 * 1000; // 2 horas
+
+    for (const [sessionId, room] of activeRooms.entries()) {
+      if (now.getTime() - room.createdAt.getTime() > maxAge) {
+        activeRooms.delete(sessionId);
+        console.log(`🧹 Sala ${sessionId} removida (expirada)`);
+      }
+    }
+  }, 30 * 60 * 1000); // Verificar a cada 30 minutos
+
+  console.log('✅ Handlers de videochamadas configurados');
 };
