@@ -32,6 +32,8 @@
     "node_modules",
     "dist",
     "**/*.test.ts",
-    "**/*.spec.ts"
+    "**/*.spec.ts",
+    "src/services/webrtcService.ts",
+    "src/socketServer.ts"
   ]
 }
