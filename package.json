@@ -1,0 +1,52 @@
+{
+  "name": "supravel-backend-ts",
+  "version": "1.0.0",
+  "description": "Backend completo do Supravel Connect",
+  "main": "dist/server.js",
+  "scripts": {
+    "start": "node dist/server.js",
+    "build": "tsc",
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "postbuild": "echo 'Build completed successfully'",
+    "heroku-postbuild": "npm run build"
+  },
+  "engines": {
+    "node": "22.x",
+    "npm": "10.x"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "mongoose": "^7.5.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "socket.io": "^4.7.2",
+    "multer": "^1.4.5-lts.1",
+    "axios": "^1.5.0",
+    "nodemailer": "^6.9.4",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.17",
+    "@types/node": "^20.5.0",
+    "@types/cors": "^2.8.13",
+    "@types/bcryptjs": "^2.4.2",
+    "@types/jsonwebtoken": "^9.0.2",
+    "@types/multer": "^1.4.7",
+    "@types/nodemailer": "^6.4.9",
+    "@types/morgan": "^1.9.4",
+    "typescript": "^5.1.6",
+    "ts-node": "^10.9.1",
+    "ts-node-dev": "^2.0.0"
+  },
+  "keywords": [
+    "supravel",
+    "backend",
+    "api",
+    "typescript",
+    "express"
+  ],
+  "author": "Supravel Team",
+  "license": "MIT"
+}
