@@ -4,30 +4,22 @@ import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import mongoose from 'mongoose';
+import morgan from 'morgan';
 
-// Importar rotas existentes
-import authRoutes from './routes/authRoutes';
-import userRoutes from './routes/userRoutes';
-import sessionRoutes from './routes/sessionRoutes';
-import subscriptionRoutes from './routes/subscriptionRoutes';
-import technicianRoutes from './routes/technicianRoutes';
-import appointmentRoutes from './routes/appointmentRoutes';
-import creditRoutes from './routes/creditRoutes';
-
-// Importar handler de videochamadas
-import { setupVideoCallHandlers } from './videocall/videocallHandlers';
-
+// Configurar dotenv primeiro
 dotenv.config();
 
 const app = express();
 const server = createServer(app);
 
-// Lista de origens permitidas
+// Configuração de CORS expandida para Vercel
 const allowedOrigins = [
-  // Produção
   'https://supravelconnect.vercel.app',
   'https://supravel-connect.vercel.app',
   'https://supravelconnect-frontend.vercel.app',
+  'https://supravelconnect-git-main.vercel.app',
+  'https://supravelconnect-git-master.vercel.app',
+  process.env.FRONTEND_URL,
   // Desenvolvimento
   'http://localhost:3000',
   'http://localhost:5173',
@@ -35,63 +27,47 @@ const allowedOrigins = [
   'http://localhost:3001',
   // Sandbox
   /^https:\/\/.*\.manusvm\.computer$/
-];
+].filter(Boolean);
 
-// Configurar Socket.IO com CORS corrigido
-const io = new Server(server, {
-  cors: {
-    origin: (origin, callback) => {
-      // Permitir requisições sem origin (mobile apps, Postman, etc.)
-      if (!origin) return callback(null, true);
-      
-      // Verificar se a origin está na lista permitida
-      const isAllowed = allowedOrigins.some(allowedOrigin => {
-        if (typeof allowedOrigin === 'string') {
-          return allowedOrigin === origin;
-        } else {
-          return allowedOrigin.test(origin);
-        }
-      });
-      
-      if (isAllowed) {
-        callback(null, true);
-      } else {
-        console.log(`CORS bloqueou origin: ${origin}`);
-        callback(null, true); // Permitir temporariamente para debug
-      }
-    },
-    methods: ['GET', 'POST'],
-    credentials: true
-  },
-  transports: ['websocket', 'polling']
-});
-
-// Middleware CORS corrigido
-app.use(cors({
-  origin: (origin, callback) => {
+// Função para verificar origin dinamicamente
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     // Permitir requisições sem origin (mobile apps, Postman, etc.)
-    if (!origin) return callback(null, true);
-    
-    // Verificar se a origin está na lista permitida
+    if (!origin) {
+      console.log('🔓 Requisição sem origin permitida');
+      return callback(null, true);
+    }
+
+    // Verificar se origin está na lista permitida
     const isAllowed = allowedOrigins.some(allowedOrigin => {
       if (typeof allowedOrigin === 'string') {
-        return allowedOrigin === origin;
-      } else {
+        return origin === allowedOrigin;
+      } else if (allowedOrigin instanceof RegExp) {
         return allowedOrigin.test(origin);
       }
+      return false;
     });
-    
+
     if (isAllowed) {
+      console.log(`✅ Origin permitida: ${origin}`);
       callback(null, true);
     } else {
-      console.log(`CORS bloqueou origin: ${origin}`);
-      callback(null, true); // Permitir temporariamente para debug
+      console.log(`❌ Origin bloqueada: ${origin}`);
+      console.log(`📋 Origins permitidas:`, allowedOrigins);
+      
+      // Em produção, permitir temporariamente para debug
+      if (process.env.NODE_ENV === 'production') {
+        console.log('🚨 Permitindo origin em produção para debug');
+        callback(null, true);
+      } else {
+        callback(new Error('Não permitido pelo CORS'), false);
+      }
     }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: [
-    'Content-Type', 
+    'Content-Type',
     'Authorization', 
     'X-Requested-With',
     'Accept',
@@ -99,13 +75,44 @@ app.use(cors({
     'Access-Control-Request-Method',
     'Access-Control-Request-Headers'
   ],
-  exposedHeaders: ['Authorization']
-}));
+  exposedHeaders: ['Content-Length', 'X-Foo', 'X-Bar'],
+  maxAge: 86400 // 24 horas
+};
 
-// Middleware para log de requisições
+// Configurar Socket.IO com CORS
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
+    credentials: true
+  },
+  transports: ['websocket', 'polling'],
+  allowEIO3: true
+});
+
+// Middlewares básicos
+app.use(morgan('combined'));
+app.use(cors(corsOptions));
+
+// Middleware adicional de CORS como fallback
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - Origin: ${req.get('Origin') || 'No origin'}`);
-  next();
+  const origin = req.headers.origin;
+  
+  if (origin && allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  } else if (!origin) {
+    res.header('Access-Control-Allow-Origin', '*');
+  }
+  
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS,PATCH');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+  
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
 });
 
 app.use(express.json({ limit: '10mb' }));
@@ -125,35 +132,55 @@ const connectDB = async (): Promise<void> => {
   }
 };
 
+// Conectar ao banco
 connectDB();
 
-// Middleware para adicionar headers CORS manualmente (fallback)
-app.use((req, res, next) => {
-  const origin = req.get('Origin');
-  if (origin) {
-    res.header('Access-Control-Allow-Origin', origin);
-  }
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS,PATCH');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
-  
-  if (req.method === 'OPTIONS') {
-    res.sendStatus(200);
-  } else {
-    next();
-  }
+// Importar e configurar rotas com tratamento de erro
+try {
+  // Importações dinâmicas para evitar erros de módulo
+  const authRoutes = require('./routes/authRoutes');
+  const userRoutes = require('./routes/userRoutes');
+  const sessionRoutes = require('./routes/sessionRoutes');
+  const subscriptionRoutes = require('./routes/subscriptionRoutes');
+  const technicianRoutes = require('./routes/technicianRoutes');
+  const appointmentRoutes = require('./routes/appointmentRoutes');
+  const creditRoutes = require('./routes/creditRoutes');
+
+  // Configurar rotas
+  app.use('/api/auth', authRoutes.default || authRoutes);
+  app.use('/api/users', userRoutes.default || userRoutes);
+  app.use('/api/sessions', sessionRoutes.default || sessionRoutes);
+  app.use('/api/subscriptions', subscriptionRoutes.default || subscriptionRoutes);
+  app.use('/api/technicians', technicianRoutes.default || technicianRoutes);
+  app.use('/api/appointments', appointmentRoutes.default || appointmentRoutes);
+  app.use('/api/credits', creditRoutes.default || creditRoutes);
+
+  console.log('✅ Todas as rotas carregadas com sucesso');
+} catch (error) {
+  console.error('❌ Erro ao carregar rotas:', error);
+}
+
+// Configurar handlers de videochamadas com tratamento de erro
+try {
+  const { setupVideoCallHandlers } = require('./videocall/videocallHandlers');
+  setupVideoCallHandlers(io);
+  console.log('✅ Handlers de videochamada configurados');
+} catch (error) {
+  console.error('⚠️ Erro ao configurar videochamadas (continuando sem elas):', error);
+}
+
+// Health check
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    environment: process.env.NODE_ENV || 'development'
+  });
 });
 
-// Rotas existentes
-app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/sessions', sessionRoutes);
-app.use('/api/subscriptions', subscriptionRoutes);
-app.use('/api/technicians', technicianRoutes);
-app.use('/api/appointments', appointmentRoutes);
-app.use('/api/credits', creditRoutes);
-
-// Rota de status expandida
+// Status expandido
 app.get('/api/status', (req, res) => {
   res.json({ 
     status: 'OK', 
@@ -161,18 +188,14 @@ app.get('/api/status', (req, res) => {
     videocall: 'Ativo',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    mongodb: mongoose.connection.readyState === 1 ? 'Conectado' : 'Desconectado',
-    cors: 'Configurado para Vercel',
-    version: '2.0.0'
-  });
-});
-
-// Rota de health check
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    cors: {
+      allowedOrigins: allowedOrigins.length,
+      production: process.env.NODE_ENV === 'production'
+    },
+    database: {
+      connected: mongoose.connection.readyState === 1,
+      host: mongoose.connection.host
+    }
   });
 });
 
@@ -180,30 +203,38 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     message: 'Supravel Connect API',
-    version: '2.0.0',
+    version: '1.0.0',
     status: 'Online',
-    docs: '/api/status'
+    timestamp: new Date().toISOString()
   });
 });
 
-// Configurar handlers de videochamadas
-setupVideoCallHandlers(io);
+// Middleware de log de requisições
+app.use((req, res, next) => {
+  console.log(`📝 ${req.method} ${req.path} - Origin: ${req.headers.origin || 'none'}`);
+  next();
+});
 
-// Middleware de erro
+// Middleware de erro global
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('❌ Erro no servidor:', err.stack);
-  res.status(500).json({ 
-    success: false,
-    message: 'Erro interno do servidor',
-    error: process.env.NODE_ENV === 'development' ? err.message : 'Algo deu errado!'
+  
+  res.status(err.status || 500).json({ 
+    message: process.env.NODE_ENV === 'production' 
+      ? 'Erro interno do servidor' 
+      : err.message,
+    error: process.env.NODE_ENV === 'production' 
+      ? {} 
+      : err
   });
 });
 
 // Middleware para rotas não encontradas
 app.use('*', (req, res) => {
   res.status(404).json({
-    success: false,
-    message: `Rota ${req.originalUrl} não encontrada`
+    message: 'Rota não encontrada',
+    path: req.originalUrl,
+    method: req.method
   });
 });
 
@@ -212,8 +243,25 @@ const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 Servidor rodando em modo ${process.env.NODE_ENV || 'development'} na porta ${PORT}`);
   console.log(`🎥 Sistema de videochamadas ativo`);
-  console.log(`🌐 CORS configurado para Vercel`);
-  console.log(`📊 Health check: http://localhost:${PORT}/health`);
+  console.log(`🌐 CORS configurado para ${allowedOrigins.length} origens`);
+  console.log(`📊 MongoDB: ${mongoose.connection.readyState === 1 ? 'Conectado' : 'Desconectado'}`);
+});
+
+// Tratamento de sinais de encerramento
+process.on('SIGTERM', () => {
+  console.log('🛑 SIGTERM recebido, encerrando servidor...');
+  server.close(() => {
+    console.log('✅ Servidor encerrado');
+    mongoose.connection.close();
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('🛑 SIGINT recebido, encerrando servidor...');
+  server.close(() => {
+    console.log('✅ Servidor encerrado');
+    mongoose.connection.close();
+  });
 });
 
 export default app;
