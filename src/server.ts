@@ -121,7 +121,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Conectar ao MongoDB
 const connectDB = async (): Promise<void> => {
   try {
-    const mongoURI = process.env.MONGODB_URI || process.env.DATABASE_URL || 'mongodb://localhost:27017/supravel';
+    const mongoURI = process.env.MONGO_URI || process.env.MONGODB_URI || process.env.DATABASE_URL || 'mongodb://localhost:27017/supravel';
+
     
     await mongoose.connect(mongoURI);
     
